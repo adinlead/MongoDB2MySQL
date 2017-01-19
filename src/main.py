@@ -10,7 +10,8 @@ from tqdm import tqdm
 from Tools import *
 from DBUtils import *
 
-def disposeData(data,conn):
+
+def disposeData(data, conn, doList=False):
     key_arr = '_id'
     pla_arr = '%s'
     val_arr = [str(data['_id']).upper()]
@@ -32,22 +33,35 @@ def disposeData(data,conn):
                 intermediate_pla_arr = '%s,%s'
                 intermediate_list = []
                 subList = list_obj[son_key]
-                for sub in subList:
-                    href = sub['href']
-                    id = href[href.rfind('/') + 1:]
-                    ret = ergodic.ergodicDict(sub, son_key + "_")
-                    son_key_arr = ret['key']
-                    son_key_arr = '`id`' + son_key_arr
-                    son_pla_arr = ret['pla']
-                    son_pla_arr = '%s' + son_pla_arr
-                    son_val_arr = ret['val']
-                    son_val_arr.insert(0, id)
-                    intermediate_list.append([[str(data['_id']).upper()], id])
-                    conn.executeInsterSQL(son_key, son_key_arr, son_pla_arr, son_val_arr)
-                conn.executeInsterSQLOfMultiterm(intermediate, intermediate_key_arr, intermediate_pla_arr,
-                                                 intermediate_list)
+                if doList:
+                    for sub in subList:
+                        href = sub['href']
+                        id = href[href.rfind('/') + 1:]
+                        ret = ergodic.ergodicDict(sub, son_key + "_")
+                        son_key_arr = ret['key']
+                        son_key_arr = '`id`' + son_key_arr
+                        son_pla_arr = ret['pla']
+                        son_pla_arr = '%s' + son_pla_arr
+                        son_val_arr = ret['val']
+                        son_val_arr.insert(0, id)
+                        intermediate_list.append([[str(data['_id']).upper()], id])
+                        conn.executeInsterSQL(son_key, son_key_arr, son_pla_arr, son_val_arr)
+                    conn.executeInsterSQLOfMultiterm(intermediate, intermediate_key_arr, intermediate_pla_arr,
+                                                     intermediate_list)
+                else:
+                    for son_key in list_obj.keys():
+                        subList = list_obj[son_key]
+                        key_arr += (',`%s_%s`' % (key, son_key))
+                        pla_arr += ',%s'
+                        val_arr.append(json.dumps(subList, ensure_ascii=False))
+
         elif isinstance(son, list):
-            pass
+            if doList:
+                pass
+            else:
+                key_arr += (',`%s`' % key)
+                pla_arr += ',%s'
+                val_arr.append(json.dumps(subList, ensure_ascii=False))
         elif isinstance(son, str):
             key_arr += (',`%s`' % key)
             pla_arr += ',%s'
@@ -61,6 +75,7 @@ def disposeData(data,conn):
             pla_arr += ',%s'
             val_arr.append(unicode(str(son)))
     conn.executeInsterSQL(mongodb_collection, key_arr, pla_arr, val_arr)
+
 
 if __name__ == '__main__':
     args = sys.argv
@@ -104,22 +119,32 @@ if __name__ == '__main__':
 
     list_to_new_table = config.get('ot', 'list_to_new_table')
 
+    text_column = config.get('ot', 'list_to_new_table').split(',')
+    unique_column = config.get('ot', 'list_to_new_table').split(',')
+
     ergodic = Ergodic()
 
-    conn = Holder()
-    conn.mysql_db = mysql_db
-    conn.collection = mongodb_collection
-    conn.initMongoDB(mongodb_uri, mongodb_port, mongodb_db)
-    conn.initMySql(mysql_host, mysql_port, mysql_user, mysql_passwd, mysql_db)
+    mongo_conn = MongoHolder()
+    mongo_conn.collection = mongodb_collection
+    mongo_conn.initMongoDB(mongodb_uri, mongodb_port, mongodb_db)
+
+    mysql_conn = MySQLHolder()  # 实例化Mysql工具
+    # 设置特殊信息
+    mysql_conn.text_column = text_column
+    mysql_conn.unique_column = unique_column
+
+    mysql_conn.mysql_db = mysql_db
+    mysql_conn.collection = mongodb_collection
+    mysql_conn.initMySql(mysql_host, mysql_port, mysql_user, mysql_passwd, mysql_db)
 
     limit = 100
-    mongo_count = conn.countMongoDB()
+    mongo_count = mongo_conn.countMongoDB()
     mongo_all_page = int(math.ceil(mongo_count / limit))
 
-    meter = tqdm(initial=0,total=mongo_count)
+    meter = tqdm(initial=0, total=mongo_count)
     for page in range(0, mongo_all_page + 1):
-        mongo_data_list = conn.readMongoTable(page, limit)
+        mongo_data_list = mongo_conn.readMongoTable(page, limit)
         for data in mongo_data_list:
-            disposeData(data,conn)
-            # threading.Thread(target=disposeData, args=(data,conn)).start()
+            disposeData(data, mysql_conn, doList=list_to_new_table)
+            # threading.Thread(target=disposeData, args=(data,mysql_conn)).start()
             meter.update(1)
